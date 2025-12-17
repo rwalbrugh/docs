@@ -1,0 +1,386 @@
+openapi: 3.0.3
+info:
+  title: Biomesight Partner API
+  version: 1.0.0
+  description: |
+    Partner-facing API for creating orders, registering kits, and retrieving results.
+
+    Results should only be fetched after Biomesight notifies partners that results are ready.
+servers:
+  - url: https://api.biomesight.com
+
+tags:
+  - name: Auth
+    description: OAuth 2.0 token issuance
+  - name: Results
+    description: Retrieve kit results
+  - name: Orders
+    description: Create partner orders
+  - name: Kits
+    description: Register collected kits
+
+paths:
+  /api/oauth/token:
+    post:
+      tags: [Auth]
+      summary: Issue OAuth access token
+      description: OAuth 2.0 Client Credentials flow.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  enum: [client_credentials]
+            example:
+              grant_type: client_credentials
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Invalid client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/results/{kit_id}:
+    get:
+      tags: [Results]
+      summary: Retrieve results for a kit
+      description: |
+        Returns results for the specified kit.
+
+        - Default response is JSON
+        - Use `format=pdf` to retrieve a base64-encoded PDF report
+
+        Status semantics:
+        - 202: Results not ready
+        - 203: PDF not ready (JSON may or may not be available)
+      security:
+        - OAuth2: [read]
+      parameters:
+        - name: kit_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, pdf]
+            default: json
+      responses:
+        "200":
+          description: Results available
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ResultsResponse"
+                  - $ref: "#/components/schemas/ResultsPdfResponse"
+        "202":
+          description: Results not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingResponse"
+        "203":
+          description: PDF not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingResponse"
+        "404":
+          description: Kit not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/order:
+    post:
+      tags: [Orders]
+      summary: Create a partner order
+      security:
+        - OAuth2: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderCreateRequest"
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderCreatedResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartnerErrorResponse"
+        "409":
+          description: Duplicate order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/register_kit:
+    post:
+      tags: [Kits]
+      summary: Register a kit/sample
+      security:
+        - OAuth2: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterKitRequest"
+      responses:
+        "200":
+          description: Registered or already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterKitResponse"
+        "400":
+          description: Invalid request or partner-scoped not found
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RegisterKitErrorResponse"
+                  - $ref: "#/components/schemas/PartnerErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterKitErrorResponse"
+
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: /api/oauth/token
+          scopes:
+            read: Read access
+            write: Write access
+
+  schemas:
+    TokenResponse:
+      type: object
+      required: [access_token, token_type]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+        scope:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    PartnerErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+    PendingResponse:
+      type: object
+      required: [pending]
+      properties:
+        pending:
+          type: string
+
+    ResultsPdfResponse:
+      type: object
+      required: [kit_id, pdf]
+      properties:
+        kit_id:
+          type: string
+        pdf:
+          type: string
+          description: Base64-encoded PDF
+
+    ResultsResponse:
+      type: object
+      required: [general]
+      properties:
+        general:
+          type: object
+          required: [export_date, kit_id, pipeline_id, sample_id]
+          properties:
+            export_date:
+              type: string
+            kit_id:
+              type: string
+            pipeline_id:
+              type: integer
+            sample_id:
+              type: integer
+        recommendations:
+          type: object
+          additionalProperties: true
+        scores:
+          type: object
+          additionalProperties:
+            type: number
+
+    OrderCreateRequest:
+      type: object
+      required: [order_id, purchase_date, user, destination_address]
+      properties:
+        order_id:
+          type: string
+        purchase_date:
+          type: string
+        user:
+          type: object
+          required: [id, first_name, last_name, email]
+          properties:
+            id:
+              type: string
+            first_name:
+              type: string
+            last_name:
+              type: string
+            email:
+              type: string
+            phone:
+              type: string
+        shipping_speed:
+          type: string
+        destination_address:
+          type: object
+          required: [address_line1, city, postcode_zip, country_code]
+          properties:
+            name:
+              type: string
+            address_line1:
+              type: string
+            address_line2:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            postcode_zip:
+              type: string
+            country_code:
+              type: string
+        items:
+          type: array
+          items:
+            type: object
+            required: [product_sku, quantity]
+            properties:
+              product_sku:
+                type: string
+              product_name:
+                type: string
+              quantity:
+                type: integer
+
+    OrderCreatedResponse:
+      type: object
+      required: [status, sale_id, external_order_id]
+      properties:
+        status:
+          type: string
+        sale_id:
+          type: integer
+        external_order_id:
+          type: string
+
+    RegisterKitRequest:
+      type: object
+      required: [order_id, kit_id, sample_date]
+      properties:
+        order_id:
+          type: string
+        kit_id:
+          type: string
+        sample_date:
+          type: string
+        sample_type:
+          type: string
+        bristol_scale:
+          type: integer
+        bm_frequency:
+          type: string
+
+    RegisterKitResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Success, Already registered]
+
+    RegisterKitErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [Error]
+        message:
+          type: string
+        current_status:
+          type: string
